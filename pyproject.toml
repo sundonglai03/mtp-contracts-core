@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mtp-contracts-core"
+version = "0.1.0"
+description = "MTP 测试用例 Schema、校验器与跨项目共享数据模型"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+    "jsonschema>=4.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mtp_contracts = ["case_schema.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
