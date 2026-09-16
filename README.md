@@ -16,9 +16,7 @@ uv sync --frozen --extra dev
 uv run --frozen pytest -q
 ```
 
-相邻目录中的两个消费项目目前通过 `tool.uv.sources` 使用本地可编辑依赖，便于三个
-项目一起开发。发布时创建版本标签，例如 `v0.1.0`，然后让消费项目依赖固定版本，
-不要跟踪 `main`：
+消费项目通过 `tool.uv.sources` 依赖固定版本标签，不跟踪 `main`：
 
 ```toml
 dependencies = ["mtp-contracts-core==0.1.0"]
@@ -26,6 +24,9 @@ dependencies = ["mtp-contracts-core==0.1.0"]
 [tool.uv.sources]
 mtp-contracts-core = { git = "https://github.com/sundonglai03/mtp-contracts-core.git", tag = "v0.1.0" }
 ```
+
+需要同时开发尚未发布的契约改动时，可以临时把 source 改为相邻目录的可编辑路径；
+发布新标签后应立即切回固定 Git tag 并更新 `uv.lock`。
 
 契约有不兼容变更时必须提升主版本或 `schema_version`，并在消费项目升级依赖前分别
 运行测试。
