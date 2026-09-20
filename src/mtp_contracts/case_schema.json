@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://my-test.local/schemas/case.schema.json",
   "title": "MTP 测试用例",
-  "description": "统一的 YAML/JSON 测试用例格式。schema_version 用于后续演进。",
+  "description": "统一的 JSON 测试用例格式。schema_version 用于后续演进。",
   "type": "object",
   "required": [
     "schema_version",

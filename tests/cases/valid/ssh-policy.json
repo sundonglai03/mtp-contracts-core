@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "SSH-POLICY-001",
+  "title": "SSH 策略校验",
+  "steps": [
+    {
+      "id": "blocked-host",
+      "action": "ssh.execute",
+      "args": {"command": "echo should-never-run", "host": "8.8.8.8"},
+      "expect_failure": true
+    }
+  ]
+}

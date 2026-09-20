@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "API-LOGIN-001",
+  "title": "登录接口可用",
+  "steps": [
+    {
+      "id": "api-login",
+      "action": "api.post",
+      "args": {"path": "/api/login"}
+    }
+  ]
+}

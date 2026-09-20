@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "id": "WEB-LOGIN-001",
+  "title": "登录页成功登录",
+  "fixtures": [
+    {"id": "audit-start", "action": "mysql.insert", "args": {"table_name": "login_audit"}}
+  ],
+  "preconditions": [
+    {"id": "db-health", "action": "mysql.health_check"}
+  ],
+  "steps": [
+    {"id": "open-login", "action": "playwright.navigate", "args": {"url": "https://example.test/login"}}
+  ],
+  "postconditions": [
+    {"id": "close-browser", "action": "playwright.close"}
+  ]
+}

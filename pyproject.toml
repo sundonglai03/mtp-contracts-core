@@ -9,7 +9,6 @@ description = "MTP 测试用例 Schema、校验器与跨项目共享数据模型
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "PyYAML>=6.0",
     "jsonschema>=4.20",
 ]
 

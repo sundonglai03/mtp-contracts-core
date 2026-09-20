@@ -255,7 +255,7 @@ class PlatformConfig:
                 problems.append(
                     f"mcp.{name}.command 为空"
                     + self._missing_hint(entry.get("command"))
-                    + "（用 ${VAR} 引用环境变量，或在 mtp_config.local.yaml 里覆盖）"
+                    + "（用 ${VAR} 引用环境变量，或在 mtp_config.local.json 里覆盖）"
                 )
                 continue
 

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "INVALID-BAD-REFS",
+  "title": "变量引用错误",
+  "variables": {"known": "ok"},
+  "steps": [
+    {
+      "id": "first",
+      "action": "playwright.navigate",
+      "args": {"url": "{{ steps.nope.url }}"}
+    },
+    {
+      "id": "second",
+      "action": "playwright.wait_for",
+      "args": {"text": "{{ vars.undefined }}"}
+    },
+    {
+      "id": "third",
+      "action": "playwright.snapshot",
+      "args": {"filename": "{{ foo.bar }}"}
+    }
+  ]
+}

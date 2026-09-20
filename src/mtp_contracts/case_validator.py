@@ -18,8 +18,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .errors import CaseValidationError, ConfigError
 from .variables import (
     NAMESPACES,
@@ -80,16 +78,18 @@ def _strip_internal(case: dict[str, Any]) -> dict[str, Any]:
 
 
 def load_case(path: str | Path) -> dict[str, Any]:
-    """读 YAML/JSON 用例文件。"""
+    """读取 JSON 用例文件。"""
     target = Path(path)
     if not target.exists():
         raise ConfigError(f"用例文件不存在: {target}")
+    if target.suffix.lower() != ".json":
+        raise ConfigError(f"仅支持 JSON 用例文件: {target}")
 
-    with target.open("r", encoding="utf-8") as fh:
-        if target.suffix.lower() == ".json":
+    try:
+        with target.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
-        else:
-            data = yaml.safe_load(fh)
+    except json.JSONDecodeError as exc:
+        raise CaseValidationError(f"JSON 用例解析失败: {target}", detail=str(exc)) from exc
 
     if not isinstance(data, dict):
         raise CaseValidationError(
