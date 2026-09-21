@@ -55,7 +55,7 @@
       "$ref": "#/$defs/environment"
     },
     "secrets": {
-      "description": "套件自带的测试凭证，可用 {{ secrets.xxx }} 引用；执行结果会脱敏。",
+      "description": "套件自带的测试凭证，格式为 {逻辑名: 实际凭证} —— 直接写真实值，不是环境变量名；用 {{ secrets.xxx }} 引用。结果与证据会脱敏，但上传的套件文件本身包含凭证，不要提交到 Git。",
       "type": "object",
       "additionalProperties": {
         "type": "string",

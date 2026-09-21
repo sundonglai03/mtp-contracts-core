@@ -144,3 +144,43 @@ def redact_text(text: str, registry: SecretRegistry | None = None, *, limit: int
     if limit is not None and len(out) > limit:
         out = out[:limit] + f"\n...<truncated {len(out) - limit} chars>"
     return out
+
+
+def collect_secret_values(case: Mapping[str, Any]) -> list[Any]:
+    """从用例里捞出所有**不该出现在输出里**的值。
+
+    两个来源：
+
+    - `secrets` 块的**值**（格式 `{逻辑名: 实际凭证}`，不是环境变量名）；
+    - 敏感字段名（`password` / `token` / …）对应的字面量值。
+
+    只收集值，不在这里替换：执行上下文保持原样（否则后续步骤引用会失真），
+    脱敏发生在结果、证据、SQLite 与 API 的写入点。
+    """
+    found: list[Any] = []
+
+    def walk(node: Any, *, under_secrets: bool = False) -> None:
+        if isinstance(node, Mapping):
+            for key, value in node.items():
+                in_secrets = under_secrets or str(key) == "secrets"
+                if (in_secrets or is_sensitive_key(key)) and not isinstance(
+                    value, (Mapping, list, tuple, set)
+                ):
+                    found.append(value)
+                walk(value, under_secrets=in_secrets)
+        elif isinstance(node, (list, tuple, set)):
+            for item in node:
+                walk(item, under_secrets=under_secrets)
+
+    walk(case)
+    return found
+
+
+def registry_for_cases(
+    cases: Iterable[Mapping[str, Any]], *, placeholder: str = DEFAULT_PLACEHOLDER
+) -> SecretRegistry:
+    """按一组用例建登记表，供结果写入点统一脱敏。"""
+    registry = SecretRegistry(placeholder)
+    for case in cases:
+        registry.register_many(collect_secret_values(case))
+    return registry

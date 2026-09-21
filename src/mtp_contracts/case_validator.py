@@ -18,12 +18,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .action_catalog import spec_for, unknown_action_issue, validate_args
 from .errors import CaseValidationError, ConfigError
 from .variables import (
     NAMESPACES,
     PATH_RE,
     STATIC_KEYS,
     iter_references,
+    tokenize,
 )
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "case_schema.json"
@@ -38,6 +40,13 @@ class ValidationIssue:
     path: str
     message: str
     kind: str = "schema"
+    # 机器可读的问题码（unknown_action / missing_arg / invalid_arg_type …）。
+    # 留空时沿用 kind，保证既有调用方拿到的 code 不变。
+    code: str = ""
+
+    @property
+    def error_code(self) -> str:
+        return self.code or self.kind
 
     def render(self) -> str:
         return f"{self.path}: {self.message}" if self.path else self.message
@@ -129,6 +138,7 @@ def validate_case(case: dict[str, Any], *, source: str = "") -> ValidationResult
     clean = _strip_internal(case)
     issues.extend(_check_schema_version(clean))
     issues.extend(_check_unique_ids(clean))
+    issues.extend(_check_actions(clean))
     issues.extend(_check_variable_references(clean))
 
     return ValidationResult(ok=not issues, issues=issues)
@@ -239,10 +249,54 @@ def _check_unique_ids(case: dict[str, Any]) -> list[ValidationIssue]:
     return issues
 
 
+def _check_actions(case: dict[str, Any]) -> list[ValidationIssue]:
+    """按动作目录检查每个步骤（含 fixture 的 cleanup）：动作是否存在、参数是否合规。"""
+    issues: list[ValidationIssue] = []
+    for phase, index, step in iter_steps(case):
+        if not isinstance(step, dict):
+            continue
+        _check_action_entry(step, f"{phase}[{index}]", issues)
+        cleanup = step.get("cleanup")
+        if isinstance(cleanup, dict):
+            _check_action_entry(cleanup, f"{phase}[{index}].cleanup", issues)
+    return issues
+
+
+def _check_action_entry(entry: dict[str, Any], base: str, issues: list[ValidationIssue]) -> None:
+    action = str(entry.get("action") or "")
+    if not action:
+        return  # 缺 action 已由结构校验报出
+    if spec_for(action) is None:
+        unknown = unknown_action_issue(action)
+        issues.append(
+            ValidationIssue(
+                path=f"{base}.action",
+                message=unknown.message,
+                kind="semantics",
+                code=unknown.code,
+            )
+        )
+        return
+    for arg_issue in validate_args(action, entry.get("args")):
+        issues.append(
+            ValidationIssue(
+                path=f"{base}.args.{arg_issue.path}",
+                message=arg_issue.message,
+                kind="semantics",
+                code=arg_issue.code,
+            )
+        )
+
+
 def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
 
     step_ids = all_step_ids(case)
+    step_actions = {
+        str(step.get("id")): str(step.get("action") or "")
+        for _, _, step in iter_steps(case)
+        if isinstance(step, dict) and step.get("id")
+    }
     variables = set((case.get("variables") or {}))
     secrets = set((case.get("secrets") or {}))
     env_keys = set((case.get("environment") or {}))
@@ -259,7 +313,9 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
             return
         if not isinstance(node, str):
             return
-        # secrets 块的值是环境变量名，不是引用
+        # secrets 块的值是**实际凭证**（`{逻辑名: 真实值}`），不是环境变量名，
+        # 也不在这里解析引用：写了模板就原样交给工具，由使用者自己决定含义，
+        # 所以整块跳过引用检查。
         if in_secrets_block:
             return
 
@@ -301,7 +357,10 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
                         )
                     )
             elif root == "steps":
-                step_id = rest.split(".")[0]
+                # 用 tokenize 而不是 split(".")：`steps.q.rows[0].col` 的第一层字段是
+                # `rows`，按点切会切出 `rows[0]` 这种假字段名。
+                tokens = tokenize(rest)
+                step_id = tokens[0] if tokens and isinstance(tokens[0], str) else ""
                 if step_id and step_id not in step_ids:
                     issues.append(
                         ValidationIssue(
@@ -313,6 +372,24 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
                             kind="semantics",
                         )
                     )
+                elif len(tokens) > 1 and isinstance(tokens[1], str) and tokens[1]:
+                    # 只校验第一段字段名是否可能返回；更深的路径（SQL 列名、响应体结构）
+                    # 运行时才知道，目录不假装能静态确定。
+                    field = tokens[1]
+                    spec = spec_for(step_actions.get(step_id, ""))
+                    if spec is not None and field not in spec.known_fields():
+                        issues.append(
+                            ValidationIssue(
+                                path=path,
+                                message=(
+                                    f"{{{{ {expr} }}}} 引用了 {step_id}（{spec.action}）"
+                                    f"不会返回的字段 {field!r}，可用: "
+                                    f"{', '.join(sorted(spec.known_fields()))}"
+                                ),
+                                kind="semantics",
+                                code="unknown_result_field",
+                            )
+                        )
             elif root == "vars":
                 name = rest.split(".")[0]
                 if name and name not in variables and name not in secrets:

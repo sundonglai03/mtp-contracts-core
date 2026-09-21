@@ -12,6 +12,7 @@
 不放运行时对象、线程、future、MCP client 或文件句柄 —— 那些属于 engine / adapters。
 """
 
+from .action_catalog import ACTIONS, ActionSpec, ArgSpec, describe, render_markdown, render_text, spec_for
 from .adapters import ActionResult, Adapter, StepContext
 from .config import McpServerConfig, PlatformConfig
 from .errors import (
@@ -32,8 +33,10 @@ from .redaction import (
     DEFAULT_PLACEHOLDER,
     DEFAULT_REDACT_KEYS,
     SecretRegistry,
+    collect_secret_values,
     redact,
     redact_text,
+    registry_for_cases,
 )
 from .results import (
     CaseResult,
@@ -64,6 +67,16 @@ __all__ = [
     "SecretRegistry",
     "redact",
     "redact_text",
+    "collect_secret_values",
+    "registry_for_cases",
+    # action catalog（生成器 / 校验器 / 执行器共用的动作契约）
+    "ACTIONS",
+    "ActionSpec",
+    "ArgSpec",
+    "spec_for",
+    "describe",
+    "render_text",
+    "render_markdown",
     # results
     "RunState",
     "StepStatus",
