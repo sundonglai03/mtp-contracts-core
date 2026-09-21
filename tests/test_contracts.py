@@ -23,6 +23,7 @@ from mtp_contracts import (
     redact,
 )
 from mtp_contracts.case_validator import SUPPORTED_SCHEMA_VERSIONS
+from mtp_contracts.variables import LazySecrets, resolve
 
 
 def test_result_models_are_json_serializable():
@@ -91,6 +92,12 @@ def test_redaction_by_key_and_by_value():
     out = redact(obj, registry=registry)
     assert out["password"] != "p@ss"
     assert "super-secret-token" not in out["note"]
+
+
+def test_suite_secret_resolves_directly_without_environment(monkeypatch):
+    monkeypatch.delenv("db-password", raising=False)
+    context = {"secrets": LazySecrets({"db_password": "db-password"})}
+    assert resolve("{{ secrets.db_password }}", context) == "db-password"
 
 
 def test_action_result_success_and_failure_dict():

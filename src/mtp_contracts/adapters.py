@@ -80,8 +80,7 @@ class StepContext:
 
     - `env`：用例 `environment` 块（已解析），api 适配器用它拼 base_url；
     - `variables`：用例 `variables`（已解析）；
-    - `secrets`：**未解析**的 {逻辑名: 环境变量名}，仅作为兜底；
-      正常路径下模板已在编排器里解析完毕。
+    - `secrets`：测试套件自带凭证；正常路径下模板已在编排器里解析完毕。
     """
 
     run_id: str = ""

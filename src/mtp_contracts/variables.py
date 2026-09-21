@@ -20,7 +20,6 @@ now   `{{ now.iso }}` / `{{ now.epoch }}`
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Iterator
@@ -103,32 +102,14 @@ def lookup(path: str, context: dict[str, Any]) -> Any:
 
 
 class LazySecrets(Mapping):
-    """`secrets` 命名空间的惰性视图。
-
-    `{逻辑名: 环境变量名}`，取值时才去读环境变量 —— 这样「没被用到的 secret
-    即使环境变量缺失，也不会阻塞用例」（比如安全策略用例只需要 host，不需要密码）。
-
-    缺环境变量时报明确错误，绝不静默返回空串（否则会跑出一个假失败）。
-    """
+    """直接读取测试套件内的 `secrets`；结果与证据层负责统一脱敏。"""
 
     def __init__(self, mapping: Mapping[str, str] | None) -> None:
         self._mapping: dict[str, str] = {str(k): str(v) for k, v in (mapping or {}).items()}
-        self._cache: dict[str, str] = {}
-
     def __getitem__(self, key: str) -> str:
-        if key in self._cache:
-            return self._cache[key]
         if key not in self._mapping:
             raise VariableResolutionError(f"未声明的 secret: {key}")
-        env_name = self._mapping[key]
-        value = os.environ.get(env_name)
-        if value is None:
-            raise VariableResolutionError(
-                f"缺少环境变量 {env_name}（供 secret {key} 使用）；"
-                "凭据只允许通过环境变量注入"
-            )
-        self._cache[key] = value
-        return value
+        return self._mapping[key]
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._mapping)
@@ -138,11 +119,6 @@ class LazySecrets(Mapping):
 
     def __contains__(self, key: object) -> bool:
         return key in self._mapping
-
-    @property
-    def env_names(self) -> dict[str, str]:
-        return dict(self._mapping)
-
 
 def resolve_string(
     text: str, context: dict[str, Any], *, path: str = "", _depth: int = 0

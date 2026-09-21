@@ -55,11 +55,11 @@
       "$ref": "#/$defs/environment"
     },
     "secrets": {
-      "description": "{逻辑名: 环境变量名}。禁止在此写明文凭据。",
+      "description": "套件自带的测试凭证，可用 {{ secrets.xxx }} 引用；执行结果会脱敏。",
       "type": "object",
       "additionalProperties": {
         "type": "string",
-        "pattern": "^[A-Z_][A-Z0-9_]*$"
+        "minLength": 1
       }
     },
     "variables": {
@@ -156,7 +156,7 @@
               "type": "string"
             },
             "password": {
-              "description": "只允许 {{ secrets.xxx }} 形式；校验器会拒绝明文",
+              "description": "测试凭证，可直接填写或引用 {{ secrets.xxx }}",
               "type": "string"
             }
           }

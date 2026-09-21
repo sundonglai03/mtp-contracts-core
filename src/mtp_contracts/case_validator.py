@@ -8,7 +8,7 @@
    - 步骤/断言 id 在同一用例内唯一；
    - `{{ ... }}` 引用必须在已声明的命名空间内（未定义的步骤/变量直接报错，
      带路径），避免运行时才发现拼错；
-   - **禁止明文凭据**：敏感字段只允许 `{{ secrets.xxx }}`。
+   - 套件内变量引用必须可解析。
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from .variables import (
     NAMESPACES,
     PATH_RE,
     STATIC_KEYS,
-    TEMPLATE_RE,
     iter_references,
 )
 
@@ -131,7 +130,6 @@ def validate_case(case: dict[str, Any], *, source: str = "") -> ValidationResult
     issues.extend(_check_schema_version(clean))
     issues.extend(_check_unique_ids(clean))
     issues.extend(_check_variable_references(clean))
-    issues.extend(_check_plaintext_secrets(clean))
 
     return ValidationResult(ok=not issues, issues=issues)
 
@@ -354,58 +352,6 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
                             kind="semantics",
                         )
                     )
-
-    walk(case, "")
-    return issues
-
-
-_SENSITIVE = (
-    "password",
-    "passwd",
-    "pwd",
-    "token",
-    "secret",
-    "api_key",
-    "apikey",
-    "cookie",
-    "authorization",
-    "credential",
-)
-
-
-def _check_plaintext_secrets(case: dict[str, Any]) -> list[ValidationIssue]:
-    """敏感字段的**字面量**值一律拒绝，只允许 `{{ secrets.xxx }}`。"""
-    issues: list[ValidationIssue] = []
-
-    def walk(node: Any, path: str, *, in_secrets_block: bool = False) -> None:
-        if isinstance(node, dict):
-            for key, value in node.items():
-                child = f"{path}.{key}" if path else str(key)
-                if child == "secrets":
-                    in_secrets_block = True
-                low = str(key).lower().replace("-", "_")
-                if (
-                    not in_secrets_block
-                    and isinstance(value, str)
-                    and value.strip()
-                    and any(s in low for s in _SENSITIVE)
-                ):
-                    if not TEMPLATE_RE.search(value):
-                        issues.append(
-                            ValidationIssue(
-                                path=child,
-                                message=(
-                                    "禁止明文凭据；请用 {{ secrets.<逻辑名> }} 引用，"
-                                    "真实值通过环境变量注入"
-                                ),
-                                kind="security",
-                            )
-                        )
-                walk(value, child, in_secrets_block=in_secrets_block)
-            return
-        if isinstance(node, list):
-            for i, value in enumerate(node):
-                walk(value, f"{path}[{i}]", in_secrets_block=in_secrets_block)
 
     walk(case, "")
     return issues

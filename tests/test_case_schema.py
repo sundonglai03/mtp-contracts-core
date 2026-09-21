@@ -18,8 +18,8 @@ INVALID = sorted((CASES / "invalid").glob("*.json"))
 
 
 def test_case_files_present():
-    assert len(VALID) == 3, [p.name for p in VALID]
-    assert len(INVALID) == 3, [p.name for p in INVALID]
+    assert len(VALID) == 4, [p.name for p in VALID]
+    assert len(INVALID) == 2, [p.name for p in INVALID]
 
 
 def test_load_case_rejects_non_json_file(tmp_path):
@@ -61,9 +61,9 @@ def test_undeclared_refs_are_specific():
         assert issue.path
 
 
-def test_plaintext_secret_rejected():
-    result = validate_file(CASES / "invalid" / "plaintext-secret.json")
-    assert any(i.path.endswith("password") for i in result.issues)
+def test_suite_credentials_are_allowed():
+    result = validate_file(CASES / "valid" / "inline-credentials.json")
+    assert result.ok, result.messages()
 
 
 def test_duplicate_step_ids_detected():
