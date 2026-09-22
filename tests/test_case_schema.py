@@ -110,6 +110,56 @@ def test_assertion_id_required_only_at_top_level():
     assert validate_case(case).ok
 
 
+@pytest.mark.parametrize(
+    "assertion,missing_path",
+    [
+        ({"id": "a1", "type": "equals", "expected": 1}, "assertions[0].actual"),
+        ({"id": "a1", "type": "equals", "actual": 1}, "assertions[0].expected"),
+        ({"id": "a1", "type": "all"}, "assertions[0].items"),
+        (
+            {"id": "a1", "type": "json_schema", "source": "{{ steps.s1 }}"},
+            "assertions[0].args.schema",
+        ),
+    ],
+)
+def test_assertion_catalog_required_fields_are_enforced(assertion, missing_path):
+    case = {
+        "schema_version": 1,
+        "id": "ASSERT-REQUIRED",
+        "title": "断言必填字段",
+        "steps": [{"id": "s1", "action": "playwright.snapshot"}],
+        "assertions": [assertion],
+    }
+
+    result = validate_case(case)
+
+    assert not result.ok
+    assert any(
+        issue.path == missing_path and issue.error_code == "missing_assertion_field"
+        for issue in result.issues
+    )
+
+
+def test_assertion_catalog_accepts_selector_alias_and_null_expected():
+    case = {
+        "schema_version": 1,
+        "id": "ASSERT-VALID",
+        "title": "合法断言参数",
+        "steps": [{"id": "s1", "action": "playwright.snapshot"}],
+        "assertions": [
+            {
+                "id": "visible",
+                "type": "element_visible",
+                "source": "{{ steps.s1 }}",
+                "args": {"selector": "#result"},
+            },
+            {"id": "nullable", "type": "equals", "actual": None, "expected": None},
+        ],
+    }
+
+    assert validate_case(case).ok
+
+
 def test_schema_version_guard():
     case = {
         "schema_version": 99,

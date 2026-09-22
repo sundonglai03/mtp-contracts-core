@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .action_catalog import spec_for, unknown_action_issue, validate_args
+from .assertion_catalog import spec_for_type
 from .errors import CaseValidationError, ConfigError
 from .variables import (
     NAMESPACES,
@@ -156,6 +157,7 @@ def validate_case(
     issues.extend(_check_schema_version(clean))
     issues.extend(_check_unique_ids(clean))
     issues.extend(_check_actions(clean, frozenset(extra_actions)))
+    issues.extend(_check_assertions(clean))
     issues.extend(_check_variable_references(clean))
 
     return ValidationResult(ok=not issues, issues=issues, warnings=_lint_case(clean))
@@ -318,6 +320,61 @@ def _check_action_entry(
                 code=arg_issue.code,
             )
         )
+
+
+def _assertion_field(assertion: dict[str, Any], dotted: str) -> tuple[bool, Any]:
+    """读取断言字段并区分「没有这个键」与「值就是 null」。"""
+    node: Any = assertion
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return False, None
+        node = node[part]
+    return True, node
+
+
+def _check_assertions(case: dict[str, Any]) -> list[ValidationIssue]:
+    """按断言目录递归检查必填字段，避免空断言在运行时被误判为成功。"""
+    issues: list[ValidationIssue] = []
+
+    def check(assertion: dict[str, Any], base: str) -> None:
+        assertion_type = str(assertion.get("type") or "")
+        spec = spec_for_type(assertion_type)
+        if spec is None:
+            return  # 未知类型已由 JSON Schema 报出
+
+        for field_name in spec.requires:
+            present, _ = _assertion_field(assertion, field_name)
+            if not present:
+                issues.append(
+                    ValidationIssue(
+                        path=f"{base}.{field_name}",
+                        message=f"{assertion_type} 断言缺少必填字段 {field_name}",
+                        kind="semantics",
+                        code="missing_assertion_field",
+                    )
+                )
+
+        for group in spec.requires_any:
+            values = [_assertion_field(assertion, field_name) for field_name in group]
+            if not any(present and value not in (None, "") for present, value in values):
+                issues.append(
+                    ValidationIssue(
+                        path=f"{base}.{group[0]}",
+                        message=f"{assertion_type} 断言需要 {' 或 '.join(group)} 之一",
+                        kind="semantics",
+                        code="missing_assertion_field",
+                    )
+                )
+
+        if assertion_type in {"all", "any"}:
+            for index, child in enumerate(assertion.get("items") or []):
+                if isinstance(child, dict):
+                    check(child, f"{base}.items[{index}]")
+
+    for index, assertion in iter_assertions(case):
+        if isinstance(assertion, dict):
+            check(assertion, f"assertions[{index}]")
+    return issues
 
 
 # ---------------------------------------------------------------------------

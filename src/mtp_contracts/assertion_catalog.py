@@ -30,6 +30,7 @@ class AssertionSpec:
     summary: str
     requires: tuple[str, ...] = ()
     optional: tuple[str, ...] = ()
+    requires_any: tuple[tuple[str, ...], ...] = ()
     example: Mapping[str, Any] = field(default_factory=dict)
     note: str = ""
 
@@ -67,7 +68,7 @@ ASSERTIONS: dict[str, AssertionSpec] = {
             "json_path",
             "按 JSONPath 取值后比较",
             ("source", "args.path"),
-            optional=("expected",),
+            optional=("expected", "args.expected"),
             note="source 指向步骤（取它的 `.json`），`args.path` 是 JSONPath 表达式。",
         ),
         AssertionSpec(
@@ -75,6 +76,7 @@ ASSERTIONS: dict[str, AssertionSpec] = {
             "校验 JSON 结构是否符合 schema",
             ("source",),
             optional=("args.schema", "args.schema_file"),
+            requires_any=(("args.schema", "args.schema_file"),),
             note="`args.schema` 直接给 schema；或 `args.schema_file` 指向文件。",
         ),
         AssertionSpec(
@@ -93,8 +95,9 @@ ASSERTIONS: dict[str, AssertionSpec] = {
         AssertionSpec(
             "element_visible",
             "页面上某元素可见",
-            ("source", "args.target"),
-            optional=("args.selector", "args.timeout_ms"),
+            ("source",),
+            optional=("args.target", "args.selector", "args.timeout_ms"),
+            requires_any=(("args.target", "args.selector"),),
             note="`args.target` 是 Playwright 选择器；source 指向页面步骤。",
         ),
         AssertionSpec(
@@ -140,6 +143,9 @@ def describe(assertion_type: str) -> str:
         line += f"。{spec.note}"
     if spec.optional:
         line += f"（可选: {', '.join(spec.optional)}）"
+    if spec.requires_any:
+        groups = [" 或 ".join(group) for group in spec.requires_any]
+        line += f"（至少一个: {'；'.join(groups)}）"
     return line
 
 
