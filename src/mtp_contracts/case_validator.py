@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from .action_catalog import spec_for, unknown_action_issue, validate_args
 from .errors import CaseValidationError, ConfigError
@@ -116,8 +116,17 @@ def load_case(path: str | Path) -> dict[str, Any]:
     return data
 
 
-def validate_case(case: dict[str, Any], *, source: str = "") -> ValidationResult:
-    """只校验不抛错，返回所有问题。"""
+def validate_case(
+    case: dict[str, Any],
+    *,
+    source: str = "",
+    extra_actions: Iterable[str] = (),
+) -> ValidationResult:
+    """只校验不抛错，返回所有问题。
+
+    `extra_actions`：调用方自己注册的动作（引擎注入的测试替身、二次开发的自定义工具）。
+    它们不在共用目录里，只跳过「动作是否存在 / 参数是否合规」两项，其余规则照常。
+    """
     issues: list[ValidationIssue] = []
 
     validator = _get_validator()
@@ -146,15 +155,17 @@ def validate_case(case: dict[str, Any], *, source: str = "") -> ValidationResult
     clean = _strip_internal(case)
     issues.extend(_check_schema_version(clean))
     issues.extend(_check_unique_ids(clean))
-    issues.extend(_check_actions(clean))
+    issues.extend(_check_actions(clean, frozenset(extra_actions)))
     issues.extend(_check_variable_references(clean))
 
     return ValidationResult(ok=not issues, issues=issues, warnings=_lint_case(clean))
 
 
-def require_valid(case: dict[str, Any], *, source: str = "") -> dict[str, Any]:
+def require_valid(
+    case: dict[str, Any], *, source: str = "", extra_actions: Iterable[str] = ()
+) -> dict[str, Any]:
     """校验失败即抛 `CaseValidationError`（消息里带全部字段路径）。"""
-    result = validate_case(case, source=source)
+    result = validate_case(case, source=source, extra_actions=extra_actions)
     if not result.ok:
         raise CaseValidationError(
             f"用例不合法（{len(result.issues)} 个问题）",
@@ -257,23 +268,36 @@ def _check_unique_ids(case: dict[str, Any]) -> list[ValidationIssue]:
     return issues
 
 
-def _check_actions(case: dict[str, Any]) -> list[ValidationIssue]:
-    """按动作目录检查每个步骤（含 fixture 的 cleanup）：动作是否存在、参数是否合规。"""
+def _check_actions(
+    case: dict[str, Any], extra_actions: frozenset[str] = frozenset()
+) -> list[ValidationIssue]:
+    """按动作目录检查每个步骤（含 fixture 的 cleanup）：动作是否存在、参数是否合规。
+
+    `extra_actions` 是**调用方自己注册的动作**（引擎注入的测试替身 / 二次开发的自定义
+    工具）：它们不在共用目录里，只跳过动作与参数检查，不影响其余规则。
+    """
     issues: list[ValidationIssue] = []
     for phase, index, step in iter_steps(case):
         if not isinstance(step, dict):
             continue
-        _check_action_entry(step, f"{phase}[{index}]", issues)
+        _check_action_entry(step, f"{phase}[{index}]", issues, extra_actions)
         cleanup = step.get("cleanup")
         if isinstance(cleanup, dict):
-            _check_action_entry(cleanup, f"{phase}[{index}].cleanup", issues)
+            _check_action_entry(cleanup, f"{phase}[{index}].cleanup", issues, extra_actions)
     return issues
 
 
-def _check_action_entry(entry: dict[str, Any], base: str, issues: list[ValidationIssue]) -> None:
+def _check_action_entry(
+    entry: dict[str, Any],
+    base: str,
+    issues: list[ValidationIssue],
+    extra_actions: frozenset[str] = frozenset(),
+) -> None:
     action = str(entry.get("action") or "")
     if not action:
         return  # 缺 action 已由结构校验报出
+    if action in extra_actions:
+        return
     if spec_for(action) is None:
         unknown = unknown_action_issue(action)
         issues.append(
