@@ -346,7 +346,9 @@ def _api() -> list[ActionSpec]:
             "api.download",
             "HTTP 下载到文件",
             shared + (ArgSpec("output", "string", description="必须落在 api_download_root 内"),),
-            ("output", "bytes") + common,
+            # 下载落的是文件，没有 json/text/extracted —— 不能沿用 api 通用的返回集，
+            # 否则用例可以引用到**实现根本不会返回**的字段（校验通过、执行时引用失败）。
+            ("output", "bytes", "http_status", "status_code", "ok", "duration_ms", "url", "method"),
             requires_any=(("url", "path"),),
         )
     )
@@ -398,9 +400,19 @@ def validate_args(action: str, args: Mapping[str, Any] | None) -> list[ArgIssue]
                 )
             continue
         value = given[present[0]]
-        if value is None and not arg.required:
+        if value is None:
+            # 可选参数显式写 null = 不提供；但**必填参数写 null 是不合法的** ——
+            # 这里以前直接 continue，于是 navigate.url=null 之类能过校验、到执行才炸。
+            if arg.required:
+                issues.append(
+                    ArgIssue(
+                        path=present[0],
+                        code="invalid_arg_type",
+                        message=f"{action} 参数 {present[0]} 必填，不能为 null",
+                    )
+                )
             continue
-        if value is None or is_template(value):
+        if is_template(value):
             continue
         if not _type_ok(value, arg.kind):
             issues.append(
@@ -415,7 +427,13 @@ def validate_args(action: str, args: Mapping[str, Any] | None) -> list[ArgIssue]
             )
 
     for group in spec.requires_any:
-        if not any(name in given and given[name] not in (None, "") for name in group):
+        # 「至少给一个」要把别名一起算上：wait_for 只写 selector、evaluate 只写
+        # expression 都是合法的（工具侧会归一化），不能因为主名缺席就报缺参数。
+        names: list[str] = []
+        for name in group:
+            arg_spec = spec.arg(name)
+            names.extend((arg_spec.name, *arg_spec.aliases) if arg_spec else (name,))
+        if not any(name in given and given[name] not in (None, "") for name in names):
             issues.append(
                 ArgIssue(
                     path=group[0],
