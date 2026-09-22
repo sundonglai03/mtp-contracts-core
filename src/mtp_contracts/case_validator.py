@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 from typing import Any
 
@@ -56,9 +57,16 @@ class ValidationIssue:
 class ValidationResult:
     ok: bool
     issues: list[ValidationIssue] = field(default_factory=list)
+    # 不阻断的运行期忠告（kind="lint"）：契约合法，但很可能在平台上跑不稳 / 跑不过。
+    # 例如用例没有自己打开页面（平台每个用例都会重建浏览器会话）、固定睡眠、
+    # 没有断言或证据、断言取的是整个步骤对象。
+    warnings: list[ValidationIssue] = field(default_factory=list)
 
     def messages(self) -> list[str]:
         return [i.render() for i in self.issues]
+
+    def warning_messages(self) -> list[str]:
+        return [i.render() for i in self.warnings]
 
 
 _schema_cache: dict[str, Any] = {}
@@ -141,7 +149,7 @@ def validate_case(case: dict[str, Any], *, source: str = "") -> ValidationResult
     issues.extend(_check_actions(clean))
     issues.extend(_check_variable_references(clean))
 
-    return ValidationResult(ok=not issues, issues=issues)
+    return ValidationResult(ok=not issues, issues=issues, warnings=_lint_case(clean))
 
 
 def require_valid(case: dict[str, Any], *, source: str = "") -> dict[str, Any]:
@@ -286,6 +294,165 @@ def _check_action_entry(entry: dict[str, Any], base: str, issues: list[Validatio
                 code=arg_issue.code,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# 运行期忠告（lint）：契约合法 ≠ 在平台上跑得过
+# ---------------------------------------------------------------------------
+# 页面级动作：都要求「已经有一个打开的页面」。navigate / navigate_back 负责把页面打开，
+# 所以不算在内。
+_PAGE_ACTIONS = frozenset(
+    {
+        "click",
+        "type",
+        "fill_form",
+        "press_key",
+        "hover",
+        "select_option",
+        "wait_for",
+        "snapshot",
+        "screenshot",
+        "evaluate",
+        "console_messages",
+        "network_requests",
+        "resize",
+    }
+)
+_OPEN_ACTIONS = frozenset({"navigate", "navigate_back"})
+# 需要「具体值」来比较的断言：actual 写成 {{ steps.x }}（整个步骤对象）几乎必然是错的。
+_VALUE_ASSERTION_TYPES = frozenset(
+    {
+        "equals",
+        "contains",
+        "status_code",
+        "json_path",
+        "json_schema",
+        "response_time",
+        "file_exists",
+        "exit_code",
+        "db_value",
+    }
+)
+# 「整对象引用」= {{ steps.<id> }}。步骤 id 里允许出现点与连字符（见 schema 的 id 规则），
+# 所以不能靠正则区分 id 与字段 —— 一律用用例里真实声明的步骤 id 判断：
+# {{ steps.x.y }} 只有在 x.y 恰好是一个步骤 id 时才算整对象引用。
+_WHOLE_STEP_RE = re.compile(r"^\{\{\s*steps\.(.+?)\s*\}\}$")
+
+
+def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
+    """运行期忠告：只报有明确证据、几乎不会误报的问题，宁缺毋滥。
+
+    这些**不阻断**套件生成，但决定了用例在平台上「能不能一次跑过」——写用例的
+    agent 拿到这些忠告就能自查，不用去读平台文档。
+    """
+    warnings: list[ValidationIssue] = []
+    entries: list[tuple[str, dict[str, Any]]] = [
+        (f"{phase}[{index}]", step) for phase, index, step in iter_steps(case)
+    ]
+    for _, step in list(entries):
+        cleanup = step.get("cleanup")
+        if isinstance(cleanup, dict):
+            entries.append(("fixture.cleanup", cleanup))
+
+    playwright_actions = {
+        str(step.get("action") or "").split(".", 1)[-1]
+        for _, step in entries
+        if str(step.get("action") or "").startswith("playwright.")
+    }
+    if (
+        playwright_actions & _PAGE_ACTIONS
+        and not (playwright_actions & _OPEN_ACTIONS)
+        and not bool(case.get("reuse_session"))
+    ):
+        warnings.append(
+            ValidationIssue(
+                path="steps",
+                message=(
+                    "本用例有页面级 playwright 动作，却没有 playwright.navigate："
+                    "平台会在每个用例开始前重建浏览器会话，用例不能依赖上一个用例打开的页面。"
+                    "请先 navigate 打开页面（并处理登录 / 门禁）；确需复用上一用例的会话时写 reuse_session: true"
+                ),
+                kind="lint",
+                code="no_navigate",
+            )
+        )
+
+    for path, step in entries:
+        if str(step.get("action") or "") != "playwright.wait_for":
+            continue
+        if (step.get("args") or {}).get("time") is not None:
+            warnings.append(
+                ValidationIssue(
+                    path=f"{path}.args.time",
+                    message=(
+                        "wait_for 用 time 做固定睡眠会让用例又慢又不稳，"
+                        "建议改成等一个明确信号（wait_for 的 target，或断言用的可见元素）"
+                    ),
+                    kind="lint",
+                    code="fixed_sleep",
+                )
+            )
+
+    if not list(case.get("assertions") or []):
+        warnings.append(
+            ValidationIssue(
+                path="assertions",
+                message="没有断言：用例只证明步骤跑完了，没有验证结果",
+                kind="lint",
+                code="no_assertions",
+            )
+        )
+
+    # 只有浏览器步骤才有截图可采（平台只对 playwright.* 落证据），
+    # 纯 ssh / mysql 用例不该被这条提醒打扰。
+    has_browser_steps = any(
+        str(step.get("action") or "").startswith("playwright.") for _, step in entries
+    )
+    if has_browser_steps and not any(list(step.get("evidence") or []) for _, step in entries):
+        warnings.append(
+            ValidationIssue(
+                path="steps",
+                message=(
+                    "没有任何步骤声明 evidence：失败时没有截图可查，排查只能靠猜"
+                    "（浏览器步骤可写 evidence: [\"screenshot\"]）"
+                ),
+                kind="lint",
+                code="no_evidence",
+            )
+        )
+
+    step_ids = all_step_ids(case)
+    for index, assertion in enumerate(case.get("assertions") or []):
+        if not isinstance(assertion, dict):
+            continue
+        for sub_path, sub in _walk_assertions(assertion, f"assertions[{index}]"):
+            if str(sub.get("type") or "") not in _VALUE_ASSERTION_TYPES:
+                continue
+            actual = sub.get("actual")
+            if not isinstance(actual, str):
+                continue
+            match = _WHOLE_STEP_RE.match(actual.strip())
+            if match and match.group(1) in step_ids:
+                warnings.append(
+                    ValidationIssue(
+                        path=f"{sub_path}.actual",
+                        message=(
+                            f"{actual.strip()} 取的是整个步骤对象，不是可比的值；"
+                            "应按断言取具体字段，例如 .stdout / .json / .page_text / .rows / .http_status"
+                        ),
+                        kind="lint",
+                        code="whole_step_actual",
+                    )
+                )
+    return warnings
+
+
+def _walk_assertions(assertion: dict[str, Any], path: str):
+    """断言自身 + all/any 的 items 递归展开。"""
+    yield path, assertion
+    for index, item in enumerate(assertion.get("items") or []):
+        if isinstance(item, dict):
+            yield from _walk_assertions(item, f"{path}.items[{index}]")
 
 
 def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
