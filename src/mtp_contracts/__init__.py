@@ -13,6 +13,7 @@
 """
 
 from .action_catalog import ACTIONS, ActionSpec, ArgSpec, describe, render_markdown, render_text, spec_for
+from .assertion_catalog import ASSERTIONS, AssertionSpec, known_types, spec_for_type
 from .adapters import ActionResult, Adapter, StepContext
 from .config import McpServerConfig, PlatformConfig
 from .errors import (
