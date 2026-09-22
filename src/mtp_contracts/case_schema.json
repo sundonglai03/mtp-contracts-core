@@ -109,6 +109,10 @@
       "items": {
         "$ref": "#/$defs/step"
       }
+    },
+    "reuse_session": {
+      "description": "默认（不写或 false）：平台会在每个用例开始前重建浏览器会话，本用例不会继承上一个用例的 cookie、缓存与页面状态。设为 true 表示本用例明确要沿用上一个用例的会话（例如刻意验证连续登录态），此时跳过隔离。",
+      "type": "boolean"
     }
   },
   "$defs": {
