@@ -348,7 +348,7 @@ def _api() -> list[ActionSpec]:
             shared + (ArgSpec("output", "string", description="必须落在 api_download_root 内"),),
             # 下载落的是文件，没有 json/text/extracted —— 不能沿用 api 通用的返回集，
             # 否则用例可以引用到**实现根本不会返回**的字段（校验通过、执行时引用失败）。
-            ("output", "bytes", "http_status", "status_code", "ok", "duration_ms", "url", "method"),
+            ("output", "bytes", "http_status", "status_code", "ok", "duration_ms", "url", "method", "error"),
             requires_any=(("url", "path"),),
         )
     )
