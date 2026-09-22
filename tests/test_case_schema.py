@@ -160,6 +160,62 @@ def test_assertion_catalog_accepts_selector_alias_and_null_expected():
     assert validate_case(case).ok
 
 
+def test_array_references_use_the_same_tokenizer_as_runtime_resolution():
+    case = {
+        "schema_version": 1,
+        "id": "ARRAY-REFS",
+        "title": "数组引用",
+        "environment": {"name": "test", "urls": ["https://example.test"]},
+        "variables": {"users": [{"name": "tester"}]},
+        "steps": [
+            {
+                "id": "open",
+                "action": "playwright.navigate",
+                "args": {"url": "{{ env.urls[0] }}"},
+            },
+            {
+                "id": "fill",
+                "action": "playwright.type",
+                "args": {"target": "#username", "text": "{{ vars.users[0].name }}"},
+            },
+        ],
+    }
+
+    assert validate_case(case).ok
+
+
+@pytest.mark.parametrize(
+    "action,args,expected_path",
+    [
+        (
+            "ssh.upload",
+            {
+                "host": "127.0.0.1",
+                "user": "root",
+                "password": "secret",
+                "remote_path": "/tmp/out",
+            },
+            "steps[0].args.local_path",
+        ),
+        ("api.request", {"url": "https://example.test"}, "steps[0].args.method"),
+    ],
+)
+def test_actions_reject_missing_parameters_that_would_change_operation_semantics(
+    action, args, expected_path
+):
+    case = {
+        "schema_version": 1,
+        "id": "ACTION-REQUIRED",
+        "title": "动作必填参数",
+        "steps": [{"id": "s1", "action": action, "args": args}],
+    }
+
+    result = validate_case(case)
+
+    assert not result.ok
+    assert any(issue.path == expected_path for issue in result.issues)
+
+
 def test_schema_version_guard():
     case = {
         "schema_version": 99,

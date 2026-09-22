@@ -306,7 +306,10 @@ def _ssh() -> list[ActionSpec]:
             "上传文件/目录（SFTP）",
             (host, user, password, key, port, allow_any, ArgSpec("local_path", "string"), ArgSpec("local_dir", "string"), ArgSpec("remote_path", "string", required=True)),
             ("local_path", "remote_path") + common,
-            requires_any=(("password", "ssh_key_filepath"),),
+            requires_any=(
+                ("password", "ssh_key_filepath"),
+                ("local_path", "local_dir"),
+            ),
         ),
         ActionSpec(
             "ssh.download",
@@ -339,8 +342,17 @@ def _api() -> list[ActionSpec]:
     )
     specs = [
         ActionSpec(f"api.{name}", f"HTTP {name.upper()}", shared, common, requires_any=(("url", "path"),))
-        for name in ("get", "post", "put", "patch", "delete", "head", "options", "request")
+        for name in ("get", "post", "put", "patch", "delete", "head", "options")
     ]
+    specs.append(
+        ActionSpec(
+            "api.request",
+            "自定义 HTTP 方法请求",
+            shared + (ArgSpec("method", "string", required=True),),
+            common,
+            requires_any=(("url", "path"),),
+        )
+    )
     specs.append(
         ActionSpec(
             "api.download",

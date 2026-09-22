@@ -639,7 +639,10 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
                             )
                         )
             elif root == "vars":
-                name = rest.split(".")[0]
+                # rest 可能以数组下标紧跟首段（users[0].name）；给 tokenizer
+                # 补一个虚拟根，避免把 "users[0]" 整体误当成变量名。
+                tokens = tokenize(f"vars.{rest}")[1:]
+                name = tokens[0] if tokens and isinstance(tokens[0], str) else ""
                 if name and name not in variables and name not in secrets:
                     issues.append(
                         ValidationIssue(
@@ -665,7 +668,8 @@ def _check_variable_references(case: dict[str, Any]) -> list[ValidationIssue]:
                         )
                     )
             elif root == "env":
-                name = rest.split(".")[0]
+                tokens = tokenize(f"env.{rest}")[1:]
+                name = tokens[0] if tokens and isinstance(tokens[0], str) else ""
                 if name and name not in env_keys:
                     issues.append(
                         ValidationIssue(
