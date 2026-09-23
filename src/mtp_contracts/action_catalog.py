@@ -129,7 +129,17 @@ def _type_ok(value: Any, kind: str) -> bool:
 def _playwright() -> list[ActionSpec]:
     common = ("duration_ms", "page_url")
     timeout = ArgSpec("timeout", "integer", description="毫秒")
-    target = ArgSpec("target", "string", required=True, aliases=("selector", "ref"), description="CSS 选择器")
+    target = ArgSpec(
+        "target",
+        "string",
+        required=True,
+        aliases=("selector", "ref"),
+        description=(
+            "CSS 选择器，或文本选择器 text=文字。点按钮**优先用 text=按钮文字**："
+            "同一句文案可能长在 <button>、<span> 或 <input type=button value=...>（老式 JSP 登录页）"
+            "或自定义组件上，写成 button:has-text('文字') 会因元素类型不符而一个都匹配不到"
+        ),
+    )
     return [
         ActionSpec(
             "playwright.navigate",

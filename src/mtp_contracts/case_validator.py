@@ -420,6 +420,18 @@ _VALUE_ASSERTION_TYPES = frozenset(
 _WHOLE_STEP_RE = re.compile(r"^\{\{\s*steps\.(.+?)\s*\}\}$")
 
 
+# 「元素类型 + 文本」混写选择器：把「长什么样」和「写什么字」写死在一起。
+# 真实事故：登录页的登录按钮是 <input type=button value="登录">（老式 JSP），
+# 用例写 button:has-text('登录') → 页面上一个 <button> 都没有，白等 15s 超时；
+# 另一处门禁弹窗是自定义 <div class=loginUKeyClass>（不是 Element 对话框），
+# 用例写 .el-dialog__wrapper:has-text('UKey驱动未安装') button:has-text('跳过') 同样全空。
+# Playwright 的文本选择器 text=文字 同时匹配这几种元素，是更稳的默认写法。
+_TYPED_TEXT_SELECTOR = re.compile(
+    r"\b(?:button|a|input)\s*:\s*has-text\s*\(\s*(['\"])(.*?)\1\s*\)"
+)
+_TARGET_TEXT_ACTIONS = {"click", "hover", "type", "select_option"}
+
+
 def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
     """运行期忠告：只报有明确证据、几乎不会误报的问题，宁缺毋滥。
 
@@ -499,6 +511,31 @@ def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
                 ),
                 kind="lint",
                 code="no_evidence",
+            )
+        )
+
+    for path, step in entries:
+        action = str(step.get("action") or "")
+        if not action.startswith("playwright.") or action.split(".", 1)[-1] not in _TARGET_TEXT_ACTIONS:
+            continue
+        args = step.get("args") or {}
+        target = str(args.get("target") or args.get("selector") or "")
+        match = _TYPED_TEXT_SELECTOR.search(target)
+        if not match:
+            continue
+        text = match.group(2).strip()
+        warnings.append(
+            ValidationIssue(
+                path=f"{path}.args.target",
+                message=(
+                    f"「元素类型 + 文本」混写很脆：「{text}」可能长在 <button> 上，"
+                    f"也可能长在 <span> 或 <input type=button value=\"{text}\">（老式 JSP 登录页）"
+                    "或自定义组件（Element Plus 弹窗等）上，写死类型就会一个都匹配不到、"
+                    f"一路等到超时。建议改用文本选择器 text={text}（它同时匹配这几种元素）；"
+                    "平台在超时错误详情里会列出页面上的真实候选元素"
+                ),
+                kind="lint",
+                code="fragile_target",
             )
         )
 
