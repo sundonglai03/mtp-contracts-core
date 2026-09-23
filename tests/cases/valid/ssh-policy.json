@@ -6,7 +6,12 @@
     {
       "id": "blocked-host",
       "action": "ssh.execute",
-      "args": {"command": "echo should-never-run", "host": "8.8.8.8"},
+      "args": {
+        "command": "echo should-never-run",
+        "host": "8.8.8.8",
+        "user": "root",
+        "password": "placeholder-for-policy-test"
+      },
       "expect_failure": true
     }
   ]

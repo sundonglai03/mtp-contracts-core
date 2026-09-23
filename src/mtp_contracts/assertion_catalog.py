@@ -35,7 +35,7 @@ class AssertionSpec:
     note: str = ""
 
     def required_text(self) -> str:
-        return " + ".join(self.requires) if self.requires else "无"
+        return " + ".join(self.requires)
 
 
 ASSERTIONS: dict[str, AssertionSpec] = {
@@ -89,16 +89,21 @@ ASSERTIONS: dict[str, AssertionSpec] = {
         AssertionSpec(
             "page_text_contains",
             "页面可见文本包含某段文字",
-            ("source", "expected"),
-            note="source 指向 snapshot 步骤（如 `{{ steps.snap-home }}`）。",
+            (),
+            optional=("source", "args.text"),
+            # 文案可以写在 expected，也可以写在 args.text；两者都给才算合规。
+            requires_any=(("expected", "args.text"),),
+            note="source 指向 snapshot 步骤（如 `{{ steps.snap-home }}`）；不给则取当前页面快照。",
         ),
         AssertionSpec(
             "element_visible",
             "页面上某元素可见",
-            ("source",),
-            optional=("args.target", "args.selector", "args.timeout_ms"),
+            (),
+            optional=("source", "args.timeout_ms"),
+            # 只要求选择器：实现（wait_for target）探的是当前页面，并不读 source。
             requires_any=(("args.target", "args.selector"),),
-            note="`args.target` 是 Playwright 选择器；source 指向页面步骤。",
+            note="`args.target`（或 `args.selector`）是 Playwright 选择器，断言探当前页面；"
+            "source 目前只是说明性字段，实现不读它。",
         ),
         AssertionSpec(
             "file_exists",
@@ -138,7 +143,11 @@ def describe(assertion_type: str) -> str:
     spec = ASSERTIONS.get(assertion_type)
     if spec is None:
         return f"{assertion_type}(未收录)"
-    line = f"{spec.type}({spec.required_text()}) — {spec.summary}"
+    line = (
+        f"{spec.type}({spec.required_text()}) — {spec.summary}"
+        if spec.requires
+        else f"{spec.type} — {spec.summary}"
+    )
     if spec.note:
         line += f"。{spec.note}"
     if spec.optional:
