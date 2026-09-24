@@ -431,6 +431,18 @@ _TYPED_TEXT_SELECTOR = re.compile(
 )
 _TARGET_TEXT_ACTIONS = {"click", "hover", "type", "select_option"}
 
+# Playwright 的 text= 不带引号是**子串**匹配。实测：text=线上申请 命中了一个隐藏的
+# span「证书线上申请」（尺寸为 0），点击一直等不到可点元素而超时；而选择器写法本身
+# 看着完全合理。要精确匹配就带引号（text="线上申请"），或者直接用 CSS。
+_TEXT_SUBSTRING = re.compile(r"^text=(?!['\"]).+")
+
+# 断言里的步骤引用：{{ steps.<id> }} 或 {{ steps.<id>.<field> }}
+_STEP_REF = re.compile(r"\{\{\s*steps\.([A-Za-z0-9_\-]+)")
+
+_PHASE_TITLE = re.compile(r"阶段\s*[一二三四五六七八九十\d]|第\s*[一二三四五六七八九十\d]+\s*阶段|phase\s*\d", re.I)
+# `cert-01-xxx` / `TC_login_02`：同前缀 + 编号，通常就是把一条流程切成了多条用例
+_CASE_SEQ = re.compile(r"^(?P<prefix>.+?)[-_]?(?P<num>\d{1,2})[-_]")
+
 
 def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
     """运行期忠告：只报有明确证据、几乎不会误报的问题，宁缺毋滥。
@@ -539,6 +551,58 @@ def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
             )
         )
 
+    # 内容级陷阱 ①：text= 子串匹配（见 _TEXT_SUBSTRING 的注释）
+    for path, step in entries:
+        action = str(step.get("action") or "")
+        if not action.startswith("playwright.") or action.split(".", 1)[-1] not in _TARGET_TEXT_ACTIONS:
+            continue
+        target = str((step.get("args") or {}).get("target") or (step.get("args") or {}).get("selector") or "")
+        if not _TEXT_SUBSTRING.match(target):
+            continue
+        warnings.append(
+            ValidationIssue(
+                path=f"{path}.args.target",
+                message=(
+                    f"`{target}` 是**子串**匹配（不带引号的 text= 会做包含匹配）："
+                    "实测 `text=线上申请` 命中了隐藏的 span「证书线上申请」（尺寸为 0），"
+                    "点击一直等不到可点元素而超时。要点确定文案就写成 text=\"…\"（精确匹配）"
+                ),
+                kind="lint",
+                code="text_substring",
+            )
+        )
+
+    # 内容级陷阱 ②：断言瞬时提示却读实时页面
+    step_returns: dict[str, set[str]] = {}
+    for _, step in entries:
+        spec = spec_for(str(step.get("action") or ""))
+        if spec is not None:
+            step_returns[str(step.get("id") or "")] = set(spec.returns or ())
+    for index, assertion in enumerate(case.get("assertions") or []):
+        if not isinstance(assertion, dict):
+            continue
+        for sub_path, sub in _walk_assertions(assertion, f"assertions[{index}]"):
+            if str(sub.get("type") or "") != "page_text_contains":
+                continue
+            source = sub.get("source")
+            match = _STEP_REF.match(str(source)) if isinstance(source, str) else None
+            if match and "page_text" in step_returns.get(match.group(1), set()):
+                continue
+            warnings.append(
+                ValidationIssue(
+                    path=f"{sub_path}.source",
+                    message=(
+                        "page_text_contains 断言的是**实时页面**（source 指向的步骤不产出 page_text，"
+                        "平台会现场探一次当前页面），而瞬时提示（弹窗 / toast）在断言执行时往往已经消失："
+                        "实测「页面文本应包含 '申请成功'」就是这么失败的——断言时弹窗已关闭，读到的是列表页。"
+                        "做法：在提示出现时加一步 playwright.snapshot，把 source 指向那一步"
+                        "（{{ steps.<snapshot 步骤> }}）；或者断言持久状态（数据库字段 / 列表列）"
+                    ),
+                    kind="lint",
+                    code="assertion_live_page",
+                )
+            )
+
     step_ids = all_step_ids(case)
     for index, assertion in enumerate(case.get("assertions") or []):
         if not isinstance(assertion, dict):
@@ -563,6 +627,58 @@ def _lint_case(case: dict[str, Any]) -> list[ValidationIssue]:
                     )
                 )
     return warnings
+
+
+def lint_suite(cases: Iterable[dict[str, Any]]) -> list[ValidationIssue]:
+    """套件级忠告：**一个功能点应该是一条用例**。
+
+    实测教训（cert 套件 10 条）：清空证书 → 终端申请 → 平台签发 → 校验落地 → 查库清零，
+    本来是**一条流程**，被切成 10 条用例后：① 一个选择器/业务失败就让后续 7 条连锁失败，
+    报告看着像「7 个功能坏了」；② 平台每条用例开始前重建浏览器会话，web 用例被迫各登录一次；
+    ③ 那些「用例」单独跑根本不成立（例如「校验证书落地」在没有申请时必然失败）。
+
+    这里只按**可静态识别**的迹象提示：id 呈同前缀编号、标题里带阶段字样。
+    """
+    suite = [case for case in cases if isinstance(case, dict)]
+    grouped: dict[str, list[str]] = {}
+    for case in suite:
+        match = _CASE_SEQ.match(str(case.get("id") or ""))
+        if match:
+            grouped.setdefault(match.group("prefix"), []).append(str(case.get("id")))
+
+    issues: list[ValidationIssue] = []
+    phased = {key: value for key, value in grouped.items() if len(value) >= 3}
+    if phased:
+        detail = "；".join(f"{key}*（{', '.join(value)}）" for key, value in sorted(phased.items()))
+        issues.append(
+            ValidationIssue(
+                path="cases",
+                message=(
+                    f"这些用例看起来是**同一条业务流程的阶段**（id 呈同前缀编号）：{detail}。"
+                    "一个功能点应该是一条用例：把各阶段写成同一条用例的多个步骤，"
+                    "用步骤级证据与断言定位。拆成多条用例会让一条业务失败引发连锁失败、"
+                    "报告误报成多个功能坏了，而且平台每条用例都会重建浏览器会话"
+                    "（web 用例被迫重复登录、重复过门禁）"
+                ),
+                kind="lint",
+                code="phase_split_cases",
+            )
+        )
+    for index, case in enumerate(suite):
+        title = str(case.get("title") or "")
+        if _PHASE_TITLE.search(title):
+            issues.append(
+                ValidationIssue(
+                    path=f"cases[{index}].title",
+                    message=(
+                        f"标题带阶段编号（{title[:24]}）：如果这些用例是同一条流程的阶段，"
+                        "请合并成一条用例的多个步骤（功能点才是用例的粒度）"
+                    ),
+                    kind="lint",
+                    code="phase_split_cases",
+                )
+            )
+    return issues
 
 
 def _walk_assertions(assertion: dict[str, Any], path: str):
